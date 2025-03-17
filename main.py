@@ -1,3 +1,4 @@
+from pip._internal.utils import logging
 from playwright.sync_api import sync_playwright
 import os
 import json
@@ -11,6 +12,15 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 from gspread_pandas import Spread, Client
+import logging
+
+
+# Cấu hình logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 cred_path = "/Users/nguyenbaothaitu9a8/Scrape_ratings/googleauth2.json"  # Đường dẫn chính xác cho macOS
 
@@ -39,15 +49,15 @@ sort_option = 'recent'
 spreadsheet_name = "UNIQUE_SCRAPE"
 worksheet_name = "Sheet4"
 
-web_socket_path = 'ws://localhost:9222/devtools/browser/10394cf0-43a2-4cc6-8db2-e0b83260643b'
+web_socket_path = 'ws://localhost:9222/devtools/browser/f3d2cb30-73a1-49f6-9599-7b16c7893bb4'
 
 # These are requires paramaters
 # Day range
-start_date = '2024-12-01'
-end_date = '2025-01-08'
+start_date = '2025-02-01'
+end_date = '2025-02-28'
 # Row range
-start_rows = 129
-end_rows = 200
+start_rows = 323
+end_rows = 1000
 get_current_rating = True  # (True, Flase)
 
 
@@ -413,11 +423,24 @@ def get_ratings(page, sort_decision, get_current_rating):
         text_list = list(text_map.keys())
         total_pages = 60
         current_page = 0
+
         while current_page < total_pages:
             temp_list = []
             time.sleep(0.25)
-            page.wait_for_selector('div.mod-reviews')
-            ratings_div = page.query_selector('div.mod-reviews')
+
+            # Kiểm tra xem selector có tồn tại không
+            if page.query_selector('div.mod-review') is None:
+                logging.warning("Selector 'div.mod-review' not found on the page.")
+                return rating_count
+
+            try:
+                # Chờ selector với timeout dài hơn
+                page.wait_for_selector('div.mod-review', timeout=60000)
+            except Exception as e:
+                logging.error(f"Error waiting for selector 'div.mod-review': {e}")
+                return rating_count
+
+            ratings_div = page.query_selector('div.mod-review')
             if ratings_div:
                 current_page += 1
                 all_items = ratings_div.query_selector_all('div.item')
@@ -428,26 +451,36 @@ def get_ratings(page, sort_decision, get_current_rating):
                         if text in date_string:
                             to_use_text_map = True
                             break
+
                     if to_use_text_map is False:
-                        day_string = re.search(day_pattern, date_string).group(1)
-                        year_string = re.search(year_pattern, date_string).group(1)
-                        month_string = month_map.get(re.search(month_pattern, date_string).group(1), "")
-                        final_string = f'{year_string}-{month_string}-{day_string}'
-                        datetime_obj = convert_to_datetime(final_string)
-                        temp_list.append(datetime_obj)
-                        if datetime_obj.date() >= start_date_obj.date() and datetime_obj.date() <= end_date_obj.date():
-                            rating_count += 1
+                        try:
+                            day_string = re.search(day_pattern, date_string).group(1)
+                            year_string = re.search(year_pattern, date_string).group(1)
+                            month_string = month_map.get(re.search(month_pattern, date_string).group(1), "")
+                            final_string = f'{year_string}-{month_string}-{day_string}'
+                            datetime_obj = convert_to_datetime(final_string)
+                            temp_list.append(datetime_obj)
+                            if datetime_obj.date() >= start_date_obj.date() and datetime_obj.date() <= end_date_obj.date():
+                                rating_count += 1
+                        except Exception as e:
+                            logging.error(f"Error parsing date string: {date_string}. Error: {e}")
+                            continue
                     else:
-                        current_date = datetime.now()
-                        ago_pattern = r'(\d+)\s+\w+\s+\w+'
-                        delay_pattern = r'\d+\s+(\w+)\s+\w+'
-                        ago_value = int(re.search(ago_pattern, date_string).group(1))
-                        delay_value = int(text_map.get(re.search(delay_pattern, date_string).group(1)))
-                        delay_days = ago_value * delay_value
-                        datetime_obj = current_date - timedelta(days=delay_days)
-                        temp_list.append(datetime_obj)
-                        if datetime_obj.date() >= start_date_obj.date() and datetime_obj.date() <= end_date_obj.date():
-                            rating_count += 1
+                        try:
+                            current_date = datetime.now()
+                            ago_pattern = r'(\d+)\s+\w+\s+\w+'
+                            delay_pattern = r'\d+\s+(\w+)\s+\w+'
+                            ago_value = int(re.search(ago_pattern, date_string).group(1))
+                            delay_value = int(text_map.get(re.search(delay_pattern, date_string).group(1)))
+                            delay_days = ago_value * delay_value
+                            datetime_obj = current_date - timedelta(days=delay_days)
+                            temp_list.append(datetime_obj)
+                            if datetime_obj.date() >= start_date_obj.date() and datetime_obj.date() <= end_date_obj.date():
+                                rating_count += 1
+                        except Exception as e:
+                            logging.error(f"Error parsing relative date string: {date_string}. Error: {e}")
+                            continue
+
                 to_continue = check_continue(page, temp_list)
                 if to_continue is True:
                     next_page(page)
@@ -602,7 +635,6 @@ def check_exists(page):
             return False
     except Exception:
         return True
-
 
 if __name__ == '__main__':
     with sync_playwright() as pw:
